@@ -1,31 +1,57 @@
+import logging
 from airflow.hooks.postgres_hook import PostgresHook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 
 class DataQualityOperator(BaseOperator):
+    """Custom operator to validate the quality of loaded data in DAG run.
+
+    Class variables:
+    ui_color: Sets a color for the Airflow DAG task in the user interface.
+    """
+
     ui_color = '#89DA59'
 
     @apply_defaults
     def __init__(self,
                  redshift_conn_id="",
-                 data_quality_check_list=[],
+                 table_checks=[],
                  *args, **kwargs):
+        """Initialise an instance of the DataQualityOperator class.
+
+        Parameters:
+        redshift_conn_id: The Airflow connection ID for Redshift.
+        table_checks: The list of tables and their checks to perform quality validation.
+
+        These parameters are passed when an instance of the class is created, 
+        typically, as a task in the main DAG.
+        """
 
         super(DataQualityOperator, self).__init__(*args, **kwargs)
         self.redshift_conn_id = redshift_conn_id
-        self.data_quality_check_list = data_quality_check_list
+        self.table_checks = table_checks
 
     def execute(self, context):
-        self.log.info('DataQualityOperator implementation')
-        redshift = PostgresHook(self.redshift_conn_id)
+        """Establishes connections with Redshift and performs the specified data quality checks.
 
-        for check in self.data_quality_check_list:
-            sql_query = check.get('check_sql')
-            expected_result = check.get('expected_result')
+        When an instance of this class is created in the main DAG script, 
+        a connection to Redshift is established and the data quality checks are performed. 
+        It iterates over the tables and performs a check of the records, 
+        raising a ValueError if the check fails.
+        """
 
-            records = redshift.get_records(sql_query)
+        self.log.info('DataQualityOperator starting')
 
-            if not records or len(records[0]) < 1 or records[0][0] != expected_result:
-                raise ValueError(f"Data quality check failed. {sql_query} returned {records[0][0]}. Expected {expected_result}")
+        redshift_hook = PostgresHook(postgres_conn_id=self.redshift_conn_id)
 
-        self.log.info(f"Data quality checks passed")
+        for table_check in self.table_checks:
+            table = table_check.get('table')
+            check_sql = table_check.get('check_sql')
+            expected_result = table_check.get('expected_result')
+
+            records = redshift_hook.get_records(check_sql)
+
+            if len(records) < 1 or len(records[0]) < 1 or records[0][0] != expected_result:
+                raise ValueError(f"Data quality check failed. {check_sql} returned {records[0][0]}. Expected {expected_result}")
+
+            self.log.info(f"Data quality check on table {table} passed with {records[0][0]} records")
